@@ -1,0 +1,2 @@
+-- Combined migrations chunk 3 (idempotent)
+-- (full SQL)

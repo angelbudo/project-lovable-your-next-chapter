@@ -1,0 +1,1 @@
+ALTER TABLE public.room_chat ADD COLUMN IF NOT EXISTS vars jsonb;

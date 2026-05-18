@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS public.rooms CASCADE;
+DROP TYPE IF EXISTS public.room_status CASCADE;
+DROP TYPE IF EXISTS public.seat_kind CASCADE;
