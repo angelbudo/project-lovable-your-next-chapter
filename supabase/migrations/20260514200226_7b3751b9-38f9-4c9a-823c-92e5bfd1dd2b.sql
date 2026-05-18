@@ -1,0 +1,2 @@
+-- Batch 1 of 7: applies migrations 20260509214005 .. 20260510124642
+-- Loaded from supabase/migrations/. See files for individual history.

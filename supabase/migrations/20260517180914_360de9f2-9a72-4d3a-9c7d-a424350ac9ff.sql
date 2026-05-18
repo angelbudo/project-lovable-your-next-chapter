@@ -1,0 +1,2 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+DROP FUNCTION IF EXISTS public._lov_exec(text);
