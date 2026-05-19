@@ -158,37 +158,12 @@ function Auth() {
     if (busy) return;
     setBusy(true);
     try {
-      if (isEmbeddedWebView()) {
-        const initiateUrl =
-          window.location.origin +
-          "/~oauth/initiate?provider=google&redirect_uri=" +
-          encodeURIComponent(window.location.origin);
-
-        const opened = openOAuthOutsideWebView(initiateUrl);
-        if (!opened) {
-          toast.error("No s'ha pogut obrir el navegador extern");
-          return;
-        }
-
-        toast.info("S'ha obert el navegador per iniciar sessió amb Google");
-        return;
-      }
-
-      // Si estem dins d'un iframe (p.ex. preview de Lovable), forcem que la
-      // redirecció a Google trenqui l'iframe i s'executi a la finestra superior.
-      if (typeof window !== "undefined" && window.top && window.top !== window.self) {
-        try {
-          window.top.location.href = window.location.href;
-        } catch {
-          // Si no podem accedir a window.top per CORS, continuem amb el flux normal.
-        }
-      }
-
       const currentOrigin = window.location.origin;
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: currentOrigin,
+          skipBrowserRedirect: true,
           queryParams: {
             prompt: "select_account",
           },
@@ -198,8 +173,19 @@ function Auth() {
         toast.error(error.message || "Error amb Google");
         return;
       }
-      // El navegador es redirigirà a Google; en tornar, AccountLinkSync + useAuth
-      // detectaran la sessió via onAuthStateChange.
+      if (!data.url) {
+        toast.error("No s'ha pogut generar l'enllaç de Google");
+        return;
+      }
+
+      const opened = window.open(data.url, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        toast.error("El navegador ha bloquejat l'obertura de la pestanya");
+        return;
+      }
+
+      toast.info("S'ha obert Google en una pestanya nova");
+      // En tornar a aquest origen, useAuth detectarà la sessió amb onAuthStateChange.
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error desconegut";
       toast.error(msg);
