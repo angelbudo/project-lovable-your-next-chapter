@@ -157,8 +157,19 @@ function Auth() {
   async function handleGoogle() {
     if (busy) return;
     setBusy(true);
+    let popup: Window | null = null;
+    let pollTimer: number | null = null;
     try {
       const currentOrigin = window.location.origin;
+
+      // Obrim el popup immediatament (dins del gest d'usuari) per evitar bloquejos.
+      const width = 480;
+      const height = 640;
+      const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+      const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+      const features = `popup=yes,width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes`;
+      popup = window.open("about:blank", "lovable-google-oauth", features);
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -170,27 +181,64 @@ function Auth() {
         },
       });
       if (error) {
+        popup?.close();
         toast.error(error.message || "Error amb Google");
         return;
       }
       if (!data.url) {
+        popup?.close();
         toast.error("No s'ha pogut generar l'enllaç de Google");
         return;
       }
 
-      const opened = window.open(data.url, "_blank", "noopener,noreferrer");
-      if (!opened) {
-        toast.error("El navegador ha bloquejat l'obertura de la pestanya");
+      if (!popup || popup.closed) {
+        toast.error("El navegador ha bloquejat la finestra emergent");
         return;
       }
 
-      toast.info("S'ha obert Google en una pestanya nova");
-      // En tornar a aquest origen, useAuth detectarà la sessió amb onAuthStateChange.
+      // Redirigim el popup ja obert a la URL d'OAuth.
+      try {
+        popup.location.href = data.url;
+      } catch {
+        popup.close();
+        toast.error("No s'ha pogut obrir Google al popup");
+        return;
+      }
+
+      // Quan Supabase completi el callback i estableixi la sessió, tanquem el popup.
+      const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+        if (event === "SIGNED_IN") {
+          try {
+            popup?.close();
+          } catch {
+            /* noop */
+          }
+          if (pollTimer) window.clearInterval(pollTimer);
+          sub.subscription.unsubscribe();
+          afterLoginSync();
+        }
+      });
+
+      // Si l'usuari tanca el popup manualment, alliberem el listener i el botó.
+      pollTimer = window.setInterval(() => {
+        if (!popup || popup.closed) {
+          if (pollTimer) window.clearInterval(pollTimer);
+          sub.subscription.unsubscribe();
+          setBusy(false);
+        }
+      }, 600);
+      return;
     } catch (e) {
+      try {
+        popup?.close();
+      } catch {
+        /* noop */
+      }
       const msg = e instanceof Error ? e.message : "Error desconegut";
       toast.error(msg);
     } finally {
-      setBusy(false);
+      // Si el flow del popup ha quedat actiu, mantenim busy fins que es resolgui.
+      if (!popup || popup.closed) setBusy(false);
     }
   }
 
