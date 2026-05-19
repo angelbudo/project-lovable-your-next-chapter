@@ -174,20 +174,18 @@ function Auth() {
         return;
       }
 
-      const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: window.location.origin,
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin,
+        },
       });
-      if (result.error) {
-        const msg =
-          result.error instanceof Error
-            ? result.error.message
-            : "Error amb Google";
-        toast.error(msg);
+      if (error) {
+        toast.error(error.message || "Error amb Google");
         return;
       }
-      if (result.redirected) return;
-      // Tokens rebuts directament
-      await afterLoginSync();
+      // El navegador es redirigirà a Google; en tornar, AccountLinkSync + useAuth
+      // detectaran la sessió via onAuthStateChange.
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error desconegut";
       toast.error(msg);
