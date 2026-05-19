@@ -174,10 +174,24 @@ function Auth() {
         return;
       }
 
+      // Si estem dins d'un iframe (p.ex. preview de Lovable), forcem que la
+      // redirecció a Google trenqui l'iframe i s'executi a la finestra superior.
+      if (typeof window !== "undefined" && window.top && window.top !== window.self) {
+        try {
+          window.top.location.href = window.location.href;
+        } catch {
+          // Si no podem accedir a window.top per CORS, continuem amb el flux normal.
+        }
+      }
+
+      const currentOrigin = window.location.origin;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: currentOrigin,
+          queryParams: {
+            prompt: "select_account",
+          },
         },
       });
       if (error) {
