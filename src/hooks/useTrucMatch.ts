@@ -558,10 +558,11 @@ export function useTrucMatch(options: UseTrucMatchOptions = {}) {
   // ──────────────────────────────────────────────────────────────────────
   const isProcessingActionRef = useRef<boolean>(false);
   const lastDispatchRef = useRef<{ key: string; at: number } | null>(null);
-  const actionSignature = (player: PlayerId, action: Action): string => {
-    if (action.type === "shout") return `shout:${action.what}`;
-    if (action.type === "play-card") return `play:${action.card.suit}-${action.card.rank}`;
-    return `t:${action.type}`;
+  const actionSignature = (_player: PlayerId, action: Action): string => {
+    const a = action as { type: string; what?: string; cardId?: string };
+    if (a.type === "shout") return `shout:${a.what ?? ""}`;
+    if (a.type === "play-card") return `play:${a.cardId ?? ""}`;
+    return `t:${a.type}`;
   };
 
   const dispatch = useCallback((player: PlayerId, action: Action) => {
