@@ -547,12 +547,43 @@ export function useTrucMatch(options: UseTrucMatchOptions = {}) {
   const responseFlashRemainingMs = (): number =>
     Math.max(0, responseFlashUntilRef.current - Date.now());
 
+  // ──────────────────────────────────────────────────────────────────────
+  // Endurecimiento defensivo (solo modo local con bots — este hook).
+  //   • Guarda idempotente: evita reentradas síncronas a `dispatch` mentre
+  //     el reducer aún no ha aplicado la acción anterior.
+  //   • Dedupe: si la misma firma de acción se intenta en una ventana muy
+  //     corta (≤250 ms) sobre el mismo estado lógico, se ignora.
+  // Online (useRoomRealtime) NO toca este hook, así que el gating es
+  // implícito: aplica solo aquí.
+  // ──────────────────────────────────────────────────────────────────────
+  const isProcessingActionRef = useRef<boolean>(false);
+  const lastDispatchRef = useRef<{ key: string; at: number } | null>(null);
+  const actionSignature = (player: PlayerId, action: Action): string => {
+    if (action.type === "shout") return `shout:${action.what}`;
+    if (action.type === "play-card") return `play:${action.card.suit}-${action.card.rank}`;
+    return `t:${action.type}`;
+  };
+
   const dispatch = useCallback((player: PlayerId, action: Action) => {
     // Mentre la partida està en pausa, ignora qualsevol acció (inclòs
     // l'humà). L'overlay ja bloqueja clics, però aquesta guarda evita
     // que entrades programàtiques (teclat, eines de debug, etc.) puguin
     // colar-se i avançar l'estat.
     if (isEngineLocked()) return;
+    // Guarda idempotente: una sola acción en vuelo por tick.
+    if (isProcessingActionRef.current) return;
+    // Dedupe de intents: misma firma sobre el mismo estado lógico en
+    // ventana corta → se descarta (protege contra dobles encolados de
+    // bots, p.ej. envit/truc programados por dos efectos a la vez).
+    const mNow = matchRef.current;
+    const dedupeKey = `${mNow?.history.length ?? 0}:${mNow?.round.phase ?? ""}:${mNow?.round.turn ?? ""}:${mNow?.round.tricks.length ?? 0}:${player}:${actionSignature(player, action)}`;
+    const now = Date.now();
+    const last = lastDispatchRef.current;
+    if (last && last.key === dedupeKey && now - last.at < 250) return;
+    lastDispatchRef.current = { key: dedupeKey, at: now };
+    isProcessingActionRef.current = true;
+    // Libera el flag tras el commit del reducer (próximo microtask).
+    queueMicrotask(() => { isProcessingActionRef.current = false; });
     // Si està actiu el cartell central de "Vull!"/"No vull", bloqueja
     // l'avanç de la mà per part dels bots fins que el cartell s'haja
     // amagat. Per a l'humà confiem en el seu propi temps de reacció.
