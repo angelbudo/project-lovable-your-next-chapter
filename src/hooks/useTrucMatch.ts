@@ -547,12 +547,44 @@ export function useTrucMatch(options: UseTrucMatchOptions = {}) {
   const responseFlashRemainingMs = (): number =>
     Math.max(0, responseFlashUntilRef.current - Date.now());
 
+  // ──────────────────────────────────────────────────────────────────────
+  // Endurecimiento defensivo (solo modo local con bots — este hook).
+  //   • Guarda idempotente: evita reentradas síncronas a `dispatch` mentre
+  //     el reducer aún no ha aplicado la acción anterior.
+  //   • Dedupe: si la misma firma de acción se intenta en una ventana muy
+  //     corta (≤250 ms) sobre el mismo estado lógico, se ignora.
+  // Online (useRoomRealtime) NO toca este hook, así que el gating es
+  // implícito: aplica solo aquí.
+  // ──────────────────────────────────────────────────────────────────────
+  const isProcessingActionRef = useRef<boolean>(false);
+  const lastDispatchRef = useRef<{ key: string; at: number } | null>(null);
+  const actionSignature = (_player: PlayerId, action: Action): string => {
+    const a = action as { type: string; what?: string; cardId?: string };
+    if (a.type === "shout") return `shout:${a.what ?? ""}`;
+    if (a.type === "play-card") return `play:${a.cardId ?? ""}`;
+    return `t:${a.type}`;
+  };
+
   const dispatch = useCallback((player: PlayerId, action: Action) => {
     // Mentre la partida està en pausa, ignora qualsevol acció (inclòs
     // l'humà). L'overlay ja bloqueja clics, però aquesta guarda evita
     // que entrades programàtiques (teclat, eines de debug, etc.) puguin
     // colar-se i avançar l'estat.
     if (isEngineLocked()) return;
+    // Guarda idempotente: una sola acción en vuelo por tick.
+    if (isProcessingActionRef.current) return;
+    // Dedupe de intents: misma firma sobre el mismo estado lógico en
+    // ventana corta → se descarta (protege contra dobles encolados de
+    // bots, p.ej. envit/truc programados por dos efectos a la vez).
+    const mNow = matchRef.current;
+    const dedupeKey = `${mNow?.history.length ?? 0}:${mNow?.round.phase ?? ""}:${mNow?.round.turn ?? ""}:${mNow?.round.tricks.length ?? 0}:${player}:${actionSignature(player, action)}`;
+    const now = Date.now();
+    const last = lastDispatchRef.current;
+    if (last && last.key === dedupeKey && now - last.at < 250) return;
+    lastDispatchRef.current = { key: dedupeKey, at: now };
+    isProcessingActionRef.current = true;
+    // Libera el flag tras el commit del reducer (próximo microtask).
+    queueMicrotask(() => { isProcessingActionRef.current = false; });
     // Si està actiu el cartell central de "Vull!"/"No vull", bloqueja
     // l'avanç de la mà per part dels bots fins que el cartell s'haja
     // amagat. Per a l'humà confiem en el seu propi temps de reacció.
@@ -2050,6 +2082,55 @@ export function useTrucMatch(options: UseTrucMatchOptions = {}) {
   }, [match.round.phase, match.history, newRound, options.userPaused]);
 
   const humanActions = legalActions(match, HUMAN);
+
+  // Watchdog de turno (solo bots locales). Si el turno de un bot no
+  // avanza en 5 s y sigue siendo legal jugar, fuerza una re-decisión y
+  // como último recurso una acción legal cualquiera para que la partida
+  // nunca quede colgada. No afecta a partidas online (otro hook).
+  const watchdogTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (watchdogTimerRef.current != null) {
+      window.clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+    if (options.paused || options.userPaused) return;
+    const r = match.round;
+    if (!r || r.phase === "round-end" || r.phase === "game-end") return;
+    const turn = r.turn;
+    if (turn === HUMAN) return;
+    const historyLen = match.history.length;
+    watchdogTimerRef.current = window.setTimeout(() => {
+      try {
+        const cur = matchRef.current;
+        if (!cur) return;
+        if (cur.history.length !== historyLen) return;
+        if (cur.round.turn !== turn || cur.round.phase !== r.phase) return;
+        const acts = legalActions(cur, turn);
+        if (acts.length === 0) return;
+        const forced =
+          botDecide(cur, turn, "neutral", {}, tuningRef.current, bluffRateRef.current) ??
+          acts[0]!;
+        console.warn("[truc] bot watchdog: forcing action for player", turn, forced);
+        if (forced) dispatch(turn, forced);
+      } catch (e) {
+        console.warn("[truc] bot watchdog error", e);
+      }
+    }, 5000) as unknown as number;
+    return () => {
+      if (watchdogTimerRef.current != null) {
+        window.clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+    };
+  }, [
+    match.round.turn,
+    match.round.phase,
+    match.history.length,
+    match.round.tricks.length,
+    options.paused,
+    options.userPaused,
+    dispatch,
+  ]);
 
   return {
     match,
