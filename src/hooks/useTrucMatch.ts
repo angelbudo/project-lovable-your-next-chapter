@@ -2083,6 +2083,55 @@ export function useTrucMatch(options: UseTrucMatchOptions = {}) {
 
   const humanActions = legalActions(match, HUMAN);
 
+  // Watchdog de turno (solo bots locales). Si el turno de un bot no
+  // avanza en 5 s y sigue siendo legal jugar, fuerza una re-decisión y
+  // como último recurso una acción legal cualquiera para que la partida
+  // nunca quede colgada. No afecta a partidas online (otro hook).
+  const watchdogTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (watchdogTimerRef.current != null) {
+      window.clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+    if (options.paused || options.userPaused) return;
+    const r = match.round;
+    if (!r || r.phase === "round-end" || r.phase === "game-end") return;
+    const turn = r.turn;
+    if (turn === HUMAN) return;
+    const historyLen = match.history.length;
+    watchdogTimerRef.current = window.setTimeout(() => {
+      try {
+        const cur = matchRef.current;
+        if (!cur) return;
+        if (cur.history.length !== historyLen) return;
+        if (cur.round.turn !== turn || cur.round.phase !== r.phase) return;
+        const acts = legalActions(cur, turn);
+        if (acts.length === 0) return;
+        const forced =
+          botDecide(cur, turn, "neutral", {}, tuningRef.current, bluffRateRef.current) ??
+          acts[0]!;
+        console.warn("[truc] bot watchdog: forcing action for player", turn, forced);
+        if (forced) dispatch(turn, forced);
+      } catch (e) {
+        console.warn("[truc] bot watchdog error", e);
+      }
+    }, 5000) as unknown as number;
+    return () => {
+      if (watchdogTimerRef.current != null) {
+        window.clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+    };
+  }, [
+    match.round.turn,
+    match.round.phase,
+    match.history.length,
+    match.round.tricks.length,
+    options.paused,
+    options.userPaused,
+    dispatch,
+  ]);
+
   return {
     match,
     dispatch,
